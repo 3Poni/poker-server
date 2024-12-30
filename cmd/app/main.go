@@ -5,8 +5,6 @@ import (
 	"log"
 	"net/http"
 	app "poker-server/internal/service"
-	hub "poker-server/internal/transport/websocket"
-	clientWebsocket "poker-server/internal/transport/websocket/client"
 	"runtime/debug"
 )
 
@@ -19,13 +17,13 @@ func main() {
 		}
 	}()
 	flag.Parse()
-	hubConnector := hub.NewHub()
+	hubConnector := app.NewHub()
 	go app.RunGame(hubConnector)
 	go hubConnector.Run()
 	log.Println("Listening on", *addr)
 	//http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		clientWebsocket.ServeWs(hubConnector, w, r)
+		app.ServeWs(hubConnector, w, r)
 	})
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {

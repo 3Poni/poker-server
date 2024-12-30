@@ -8,9 +8,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	hub2 "poker-server/internal/transport/websocket"
-	client2 "poker-server/internal/transport/websocket/client"
-	"poker-server/internal/transport/websocket/responder"
 	"reflect"
 	"slices"
 	"sort"
@@ -21,7 +18,7 @@ import (
 
 type Player struct {
 	Id         string
-	client     *client2.Client
+	client     *Client
 	chips      uint32
 	bet        uint32
 	currentBet uint32
@@ -55,6 +52,7 @@ var table []Card
 var deck []Card
 var suits = [4]string{"spades", "heart", "clubs", "diamonds"}
 var cards = [13]uint8{2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+var waitTime time.Duration = 1
 
 func serveHome(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -69,17 +67,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "home.html")
 }
 
-type Request1 struct {
-	Action  string
-	Bet     int
-	Message string
-}
-
-type Game struct {
-	action string
-}
-
-func RunGame(h *hub2.Hub) {
+func RunGame(h *Hub) {
 	for {
 		if len(h.Clients) >= 1 {
 			var wg sync.WaitGroup
@@ -91,7 +79,8 @@ func RunGame(h *hub2.Hub) {
 			wg.Wait()
 			h.Broadcast <- []byte("wait players game ")
 		} else {
-			time.Sleep(5 * time.Second)
+			time.Sleep(waitTime * time.Second)
+			log.Println("wait players game ")
 			h.Broadcast <- []byte("players low")
 		}
 	}
@@ -144,9 +133,9 @@ func setPlayersCards() {
 	}
 }
 
-func startGame(h *hub2.Hub) {
+func startGame(h *Hub) {
 	time.Sleep(1 * time.Second)
-	r := responder.JSONResponse{
+	r := JSONResponse{
 		Body: map[string]any{},
 		Hub:  h,
 	}
@@ -208,7 +197,7 @@ func startGame(h *hub2.Hub) {
 	}
 }
 
-func sendResponse(players []Player, r responder.JSONResponse) {
+func sendResponse(players []Player, r JSONResponse) {
 	var pResp []PlayerResp
 	for _, p := range players {
 		var wcResp []CardsExp
@@ -275,63 +264,6 @@ type CardsExp struct {
 	Suit string `json:"suit"`
 }
 
-func (g *Game) Call() {
-	playerBet := active[0].currentBet
-	chipsToCut := currentBet - playerBet
-	active[0].currentBet = currentBet
-	if chipsToCut > active[0].chips {
-		chipsToCut = active[0].chips
-		active[0].chips = 0
-		allIn()
-	} else {
-		active[0].chips -= chipsToCut
-	}
-	active[0].bet += chipsToCut
-	active[0].status = "call"
-	bank += chipsToCut
-	var x Player
-	x, active = active[0], active[1:] //shift
-	passed = append(passed, x)        // push
-
-	g.action = "turn"
-}
-func (g *Game) Raise() {
-	chipsToCut := active[0].raiseBet - active[0].currentBet
-	active[0].currentBet = active[0].raiseBet
-	active[0].chips -= chipsToCut
-	active[0].bet += chipsToCut
-	bank += chipsToCut
-	currentBet = active[0].raiseBet
-	active[0].raiseBet = 0
-	active[0].status = "raise"
-	active = slices.Concat(active, passed)
-	passed = []Player{}
-
-	if active[0].chips <= 0 {
-		allIn()
-	} else {
-		var x Player
-		x, active = active[0], active[1:] //shift
-		passed = append(passed, x)        // push
-	}
-
-	g.action = "turn"
-}
-func (g *Game) Fold() {
-	active[0].status = "fold"
-	var x Player
-	x, active = active[0], active[1:] //shift
-	foldSlice = append(foldSlice, x)  // push
-
-	g.action = "turn"
-}
-func (g *Game) Check() {
-	active[0].status = "check"
-	var p Player
-	p, active = active[0], active[1:] // shift
-	passed = append(passed, p)        // push
-	g.action = "turn"
-}
 func allIn() {
 	var x Player
 	x, active = active[0], active[1:]  //shift
@@ -484,16 +416,6 @@ func givePrize(scores map[string]map[string]any, prizeOrder int) {
 	}
 }
 
-type GameDefiner struct {
-	highSuit     string
-	subSuit      string
-	high         uint8
-	score        uint8
-	subscore     uint8
-	cardsWinId   []int
-	cardsWinSuit string
-}
-
 func getScore(cardsHand []Card) map[string]any {
 	var result = make(map[string]any)
 	var tableScores = make(map[uint8]int)
@@ -554,8 +476,8 @@ func getScore(cardsHand []Card) map[string]any {
 	} else {
 		result["subscore"] = int(gd.subscore)
 	}
-	result["high"] = gd.high
-	result["score"] = gd.score
+	result["high"] = int(gd.high)
+	result["score"] = int(gd.score)
 	result["highSuit"] = gd.highSuit
 	result["subSuit"] = gd.subSuit
 	var winCards []Card
@@ -584,198 +506,6 @@ func getScore(cardsHand []Card) map[string]any {
 	return result
 }
 
-func (gd *GameDefiner) checkHigh(cardsHand []Card) {
-	if cardsHand[0].Id > cardsHand[1].Id {
-		gd.highSuit = cardsHand[0].Suit
-	} else {
-		gd.highSuit = cardsHand[1].Suit
-	}
-	if cardsHand[0].Id > cardsHand[1].Id {
-		gd.subSuit = cardsHand[0].Suit
-	} else {
-		gd.subSuit = cardsHand[1].Suit
-	}
-	if cardsHand[0].Id > cardsHand[1].Id {
-		gd.high = cardsHand[0].Id
-	} else {
-		gd.high = cardsHand[1].Id
-	}
-	if cardsHand[0].Id > cardsHand[1].Id {
-		gd.subscore = cardsHand[0].Id
-	} else {
-		gd.subscore = cardsHand[1].Id
-	}
-}
-func (gd *GameDefiner) checkPairs(tableScores map[uint8]int) {
-	var pairs = make(map[int]int)
-	var three = make(map[int]int)
-	for id, count := range tableScores {
-		if count == 2 {
-			pairs[int(id)] = count
-		}
-		if count == 3 {
-			three[int(id)] = count
-		}
-		if count == 2 && gd.score <= 2 {
-			gd.cardsWinId = []int{}
-			maxPairId := getMax(pairs)
-			gd.cardsWinId = append(gd.cardsWinId, maxPairId) // push
-			gd.score = 2                                     // PAIR
-		}
-		if count == 2 && gd.score <= 3 && len(pairs) > 1 {
-			gd.cardsWinId = []int{}
-			maxPairId := getMax(pairs)
-			countToSave := pairs[maxPairId]
-			delete(pairs, maxPairId)
-			preMaxPairId := getMax(pairs)
-			pairs[maxPairId] = countToSave
-			gd.cardsWinId = append(gd.cardsWinId, maxPairId, preMaxPairId)
-			gd.score = 3 // TWO PAIR
-		}
-		if count == 3 && gd.score <= 4 {
-			gd.cardsWinId = []int{}
-			maxThreeId := getMax(three)
-			gd.cardsWinId = append(gd.cardsWinId, maxThreeId)
-			gd.score = 4 // THREE
-		}
-		if len(three) == 1 && len(pairs) > 0 {
-			gd.cardsWinId = []int{}
-			maxPairId := getMax(pairs)
-			maxThreeId := getMax(three)
-			gd.cardsWinId = append(gd.cardsWinId, maxThreeId, maxPairId)
-			gd.score = 7 // FULL HOUSE
-		}
-		if count == 4 {
-			gd.cardsWinId = []int{}
-			gd.cardsWinId = append(gd.cardsWinId, int(id))
-			gd.score = 8 // FOUR
-		}
-	}
-}
-func (gd *GameDefiner) checkStraight(tableScores map[uint8]int) {
-	prevCard := 0
-	var streak = 0
-	var firstCard = 0
-	var keys []int
-	for k, _ := range tableScores {
-		keys = append(keys, int(k))
-	}
-	sort.Ints(keys)
-	if gd.wheelCase(keys, 5) {
-		return
-	}
-	for i := 0; i < 5; i++ {
-		if streak == 5 {
-			gd.score = 5 // STRAIGHT
-			gd.cardsWinId = []int{}
-			for j := firstCard; j >= firstCard-4; j-- {
-				gd.cardsWinId = append(gd.cardsWinId, j)
-			}
-			return
-		}
-		if streak == 0 {
-			firstCard = keys[i]
-			prevCard = keys[i]
-			streak++
-		} else {
-			if prevCard-1 == keys[i] {
-				prevCard = keys[i]
-				streak++
-			} else {
-				streak = 0
-			}
-		}
-	}
-}
-func (gd *GameDefiner) wheelCase(cardsGiven []int, scoreSet int) bool {
-	wheelCaseCards := [...]int{14, 2, 3, 4, 5}
-	notIn := false
-	for i := 0; i < 5; i++ {
-		notIn = slices.Contains(cardsGiven, wheelCaseCards[i])
-		if notIn == false {
-			return false
-		}
-	}
-	gd.cardsWinId = []int{14, 2, 3, 4, 5}
-	gd.score = uint8(scoreSet) // STRAIGHT
-	return true
-}
-func (gd *GameDefiner) checkFlush(tableSuits map[string]int, cardsHand []Card, cardsTable []Card) {
-	for k, s := range tableSuits {
-		if s >= 5 {
-			gd.score = 6 // FLUSH
-			gd.cardsWinId = []int{}
-			gd.cardsWinSuit = k
-			var allCards = slices.Concat(cardsHand, cardsTable)
-			for _, card := range allCards {
-				if card.Suit == gd.cardsWinSuit && gd.subscore < card.Id {
-					gd.subscore = card.Id
-				}
-			}
-			gd.checkStraightFlush(tableSuits, cardsHand, cardsTable)
-		}
-	}
-}
-func (gd *GameDefiner) checkStraightFlush(tableSuits map[string]int, cardsHand []Card, cardsTable []Card) {
-	if gd.score != 6 {
-		gd.checkFlush(tableSuits, cardsHand, cardsTable)
-		return
-	}
-	prevCard := 0
-	var streak = 0
-	var firstCard = 0
-	var keys []int
-	for _, card := range slices.Concat(cardsHand, cardsTable) {
-		//if card.suit == gd.cardsWinSuit { cardsToCheck = append(cardsToCheck, card) }
-		if card.Suit == gd.cardsWinSuit {
-			keys = append(keys, int(card.Id))
-		}
-	}
-	sort.Ints(keys)
-	//sort.Slice(keys, func(i, j int) bool {
-	//	return keys[i] > keys[j]
-	//})
-	if gd.wheelCase(keys, 9) {
-		return
-	}
-	for i := 0; i < 5; i++ {
-		if streak == 5 {
-			gd.score = 9 // STRAIGHT FLUSH
-			gd.cardsWinId = []int{}
-			for j := firstCard; j >= firstCard-4; j-- {
-				gd.cardsWinId = append(gd.cardsWinId, j)
-			}
-			i = 6
-		}
-		if streak == 0 {
-			firstCard = keys[i]
-			prevCard = keys[i]
-			streak++
-		} else {
-			if prevCard-1 == keys[i] {
-				prevCard = keys[i]
-				streak++
-			} else {
-				streak = 0
-			}
-		}
-	}
-	if gd.score == 9 {
-		gd.checkRoyal(keys)
-	}
-}
-func (gd *GameDefiner) checkRoyal(cardsGiven []int) {
-	cardsNeeded := [...]int{10, 11, 12, 13, 14}
-	notIn := false
-	for i := 0; i < 5; i++ {
-		notIn = slices.Contains(cardsGiven, cardsNeeded[i])
-		if notIn == false {
-			return
-		}
-	}
-	gd.score = 10 // ROYAL
-}
-
 func nextRound() {
 	log.Println("next round, stage ", stage)
 	active, passed = passed, []Player{}
@@ -794,21 +524,6 @@ func nextRound() {
 	} else {
 		tableAddCard(1)
 	}
-}
-
-func getMax(mapToFind map[int]int) int {
-	maxVal := 0
-	var maxKey int
-	for k, v := range mapToFind {
-		if v > maxVal {
-			maxVal = v
-			maxKey = k
-		}
-		if v == maxVal && k > maxKey {
-			maxKey = k
-		}
-	}
-	return maxKey
 }
 
 func tableAddCard(amount int) {
@@ -837,7 +552,7 @@ func hold(ctx context.Context) string {
 			return "Check"
 		case message := <-active[0].client.Action:
 			log.Println(message, " client request hold")
-			r := client2.Request{}
+			r := Request{}
 			err := json.Unmarshal(message, &r)
 			if err != nil {
 				log.Fatal("json unmarshal error:", err)
@@ -856,7 +571,7 @@ func hold(ctx context.Context) string {
 	}
 }
 
-func setPlayers(amount int, h *hub2.Hub) {
+func setPlayers(amount int, h *Hub) {
 	active = make([]Player, 0)
 
 	i := 1

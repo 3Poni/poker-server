@@ -1,4 +1,4 @@
-package client
+package app
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	Hub "poker-server/internal/transport/websocket"
 )
 
 const (
@@ -31,7 +30,7 @@ var upgrader = websocket.Upgrader{
 
 // Client это посредник между хабом и вебсокет соединением
 type Client struct {
-	hub    *Hub.Hub
+	hub    *Hub
 	conn   *websocket.Conn
 	Send   chan []byte
 	Action chan []byte
@@ -137,7 +136,7 @@ func (c *Client) test(test []byte) {
 }
 
 // ServeWs обрабатывает запросы websocket от одного узла.
-func ServeWs(hub *Hub.Hub, w http.ResponseWriter, r *http.Request) {
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	upgrader.CheckOrigin = func(r *http.Request) bool { return true }
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

@@ -1,10 +1,8 @@
-package responder
+package app
 
 import (
 	"encoding/json"
 	"log"
-	app "poker-server/internal/service"
-	hub2 "poker-server/internal/transport/websocket"
 )
 
 type Responder interface {
@@ -13,11 +11,11 @@ type Responder interface {
 
 type JSONResponse struct {
 	Body         map[string]any
-	Hub          *hub2.Hub
+	Hub          *Hub
 	ActionCalled string
-	Players      []app.Player `json:"players"`
-	Bank         int          `json:"bank"`
-	TableCards   []app.Card   `json:"tableCards"`
+	Players      []Player `json:"players"`
+	Bank         int      `json:"bank"`
+	TableCards   []Card   `json:"tableCards"`
 }
 
 func (j *JSONResponse) Respond() {
@@ -25,9 +23,9 @@ func (j *JSONResponse) Respond() {
 		log.Println(j.Players, " j players  =======")
 		for _, p := range j.Players {
 			if p.Id == client.Id {
-				var cArr []app.CardsExp
+				var cArr []CardsExp
 				for _, c := range p.Cards {
-					cArr = append(cArr, app.CardsExp{
+					cArr = append(cArr, CardsExp{
 						Id:   c.Id,
 						Suit: c.Suit,
 					})
