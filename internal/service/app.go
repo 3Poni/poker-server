@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"poker-server/internal/transport/websocket"
 	"reflect"
 	"slices"
 	"sort"
@@ -18,7 +19,7 @@ import (
 
 type Player struct {
 	Id         string
-	client     *Client
+	client     *websocket.Client
 	chips      uint32
 	bet        uint32
 	currentBet uint32
@@ -67,7 +68,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, "home.html")
 }
 
-func RunGame(h *Hub) {
+func RunGame(h *websocket.Hub) {
 	for {
 		if len(h.Clients) >= 1 {
 			var wg sync.WaitGroup
@@ -133,7 +134,7 @@ func setPlayersCards() {
 	}
 }
 
-func startGame(h *Hub) {
+func startGame(h *websocket.Hub) {
 	time.Sleep(1 * time.Second)
 	r := JSONResponse{
 		Body: map[string]any{},
@@ -552,7 +553,7 @@ func hold(ctx context.Context) string {
 			return "Check"
 		case message := <-active[0].client.Action:
 			log.Println(message, " client request hold")
-			r := Request{}
+			r := websocket.Request{}
 			err := json.Unmarshal(message, &r)
 			if err != nil {
 				log.Fatal("json unmarshal error:", err)
@@ -571,7 +572,7 @@ func hold(ctx context.Context) string {
 	}
 }
 
-func setPlayers(amount int, h *Hub) {
+func setPlayers(amount int, h *websocket.Hub) {
 	active = make([]Player, 0)
 
 	i := 1

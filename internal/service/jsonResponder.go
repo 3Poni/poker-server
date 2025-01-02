@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"log"
+	"poker-server/internal/transport/websocket"
 )
 
 type Responder interface {
@@ -11,7 +12,7 @@ type Responder interface {
 
 type JSONResponse struct {
 	Body         map[string]any
-	Hub          *Hub
+	Hub          *websocket.Hub
 	ActionCalled string
 	Players      []Player `json:"players"`
 	Bank         int      `json:"bank"`
